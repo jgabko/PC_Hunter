@@ -103,10 +103,6 @@ oportunidades de compra e revenda.
 Para rodar este projeto, copie `.env.example` para `.env` e preencha sua
 chave da Groq e demais configurações necessárias.
 
-> ⚠️ Se você usou este projeto antes da reorganização de módulos, **revogue**
-> a chave antiga da Groq (ela estava exposta em texto puro no código-fonte) e
-> gere uma nova em <https://console.groq.com/keys>.
-
 <!-- Getting Started -->
 ## Getting Started
 
