@@ -10,6 +10,7 @@ pandas==2.2.2
 
 # Infraestrutura
 python-dotenv==1.0.1
+psycopg2-binary==2.9.9
 
 # IA (pipeline híbrido regex + IA)
 groq==0.9.0

@@ -1,14 +1,14 @@
-import sqlite3
+import psycopg2
 import pandas as pd
 import numpy as np
 from benchmarks import BenchmarkLoader
-from config import DB_NAME
+from config import DATABASE_URL
 
 
 class PCRanking:
     def __init__(self):
         self.bench = BenchmarkLoader()
-        self.conn = sqlite3.connect(DB_NAME)
+        self.conn = psycopg2.connect(DATABASE_URL)
 
         # --- CONFIGURAÇÕES DE REALIDADE FINANCEIRA ---
         self.current_market_rate = 0.18  # Valor base (será ajustado dinamicamente)
@@ -19,7 +19,7 @@ class PCRanking:
         """Carrega dados brutos do banco"""
         query = """
         SELECT id, title, price, link, cpu, gpu, ram, storage
-        FROM OLX_ITENS_RAW 
+        FROM olx_itens_raw
         WHERE ai_check = 1 AND price > 0
         """
         df = pd.read_sql_query(query, self.conn)

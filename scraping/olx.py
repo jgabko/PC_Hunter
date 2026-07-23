@@ -1,6 +1,5 @@
 import re
 import time
-import sqlite3
 import random
 import sys
 from pathlib import Path
@@ -20,7 +19,7 @@ from persistence import persist as Persist
 from scraping import olx_detail_page
 from processing.specs import parse_specs, parse_loc, parse_price
 from schema.schema import ItemPCSchema
-from config import BASE_URL, DB_NAME
+from config import BASE_URL
 
 # Importa a pipeline híbrida
 from processing.specs_AI import process_pipeline
@@ -37,18 +36,18 @@ def get_random_sleep(min_s=2, max_s=5):
 
 def check_link_exists(link):
     """Verifica se o link já existe no banco."""
-    conn = Persist.persist_init()  # garante que a tabela existe
+    conn = Persist.persist_init()  # abre conexão com o Postgres/Supabase
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM OLX_ITENS_RAW WHERE link = ?", (link,))
+    cursor.execute("SELECT id FROM olx_itens_raw WHERE link = %s", (link,))
     exists = cursor.fetchone()
     conn.close()
     return exists is not None
 
 def main():
-    # Garante que o banco e as tabelas existam ANTES de qualquer consulta.
-    # (Sem isso, check_link_exists() tentava fazer SELECT numa tabela que só
-    # é criada dentro de Persist.persist() — que só roda depois que o
-    # primeiro item passa a validação. Em banco novo, isso quebrava tudo.)
+    # Valida a conexão com o Postgres/Supabase ANTES de qualquer consulta
+    # (falha rápido e com erro claro se DATABASE_URL estiver errada/faltando,
+    # em vez de quebrar silenciosamente lá na frente). As tabelas em si já
+    # devem existir — foram criadas uma vez via schema_postgres.sql.
     Persist.persist_init().close()
 
     page_number = START_PAGE
