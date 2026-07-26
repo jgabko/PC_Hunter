@@ -68,14 +68,28 @@ def persist(title, price, link, specs, local, details):
         conn.close()
 
 
+def _sem_nul(valor):
+    """
+    Remove bytes NUL (\\x00) de strings antes de mandar pro Postgres.
+    O Postgres recusa qualquer texto com esse caractere (erro "A string
+    literal cannot contain NUL (0x00) characters"), e de vez em quando
+    aparece um anúncio da OLX com isso na descrição (geralmente texto
+    colado de Word/PDF). Sem isso, o item inteiro falha silenciosamente.
+    """
+    if isinstance(valor, str):
+        return valor.replace("\x00", "")
+    return valor
+
+
 def persist_item(conn, cursor, title, price, link, specs, local, details):
-    gpu = specs.get('gpu')
-    ram = specs.get('ram')
-    cpu = specs.get('cpu')
-    storage = specs.get('storage')
-    city = local.get('cidade')
-    area = local.get('bairro')
-    description = details.get('Descrição')
+    gpu = _sem_nul(specs.get('gpu'))
+    ram = _sem_nul(specs.get('ram'))
+    cpu = _sem_nul(specs.get('cpu'))
+    storage = _sem_nul(specs.get('storage'))
+    city = _sem_nul(local.get('cidade'))
+    area = _sem_nul(local.get('bairro'))
+    description = _sem_nul(details.get('Descrição'))
+    title = _sem_nul(title)
 
     existence = check_exits(conn, link)
 
