@@ -1,7 +1,7 @@
 import re
 from bs4 import BeautifulSoup
 from curl_cffi import requests
-from curl_cffi.requests.exceptions import RequestException
+from curl_cffi.requests.exceptions import RequestsException
 
 # url='https://pr.olx.com.br/regiao-de-curitiba-e-paranagua/informatica/computadores-e-desktops/pc-gamer-seminovo-1459792232?lis=listing_no_category'
 
@@ -23,7 +23,7 @@ def getDetails(url):
 
     try:
         response = requests.get(url, impersonate="chrome110", timeout=15)
-    except RequestException as e:
+    except RequestsException as e:
         print(f"  [ERRO REDE] Falha ao buscar detalhes de {url}: {e}")
         return {}
 
