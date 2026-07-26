@@ -32,7 +32,7 @@ export default function App() {
       .then((data) => setMarket(data))
       .catch((err) =>
         setError(
-          `Não foi possível carregar os dados (${err.message}). A API está rodando em http://localhost:8000?`
+          `Não foi possível carregar os dados (${err.message}). Confira se a API está no ar e se VITE_API_URL está configurada corretamente.`
         )
       )
       .finally(() => setLoading(false));
