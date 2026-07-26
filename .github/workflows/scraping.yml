@@ -1,0 +1,36 @@
+name: Scraping agendado (OLX -> Supabase)
+
+on:
+  # Roda sozinho a cada 6h. Cron do GitHub Actions é sempre em UTC;
+  # 0,6,12,18 UTC = 21h, 3h, 9h, 15h no horário de Brasília (UTC-3).
+  schedule:
+    - cron: "0 */6 * * *"
+
+  # Permite disparar manualmente pela aba "Actions" do GitHub, sem
+  # precisar esperar o horário do cron (útil pra testar).
+  workflow_dispatch:
+
+jobs:
+  scraping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20  # trava de segurança: cancela se travar em algo (ex: OLX bloqueando)
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11 (mesma versão usada no Render)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Rodar pipeline completo (scraping + IA + limpeza)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          USE_GROQ: "true"
+        run: python pipeline.py
