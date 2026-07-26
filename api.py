@@ -14,17 +14,17 @@ import json
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from config import FRONTEND_ORIGINS
+
 app = FastAPI(title="PC Hunter API")
 
 # --- CORS ---
-# Libera o frontend rodando localmente via Vite (porta padrão 5173).
-# Como tudo roda só na sua máquina, liberamos localhost em geral.
+# Em dev, FRONTEND_ORIGINS cai no padrão do Vite (localhost:5173). Em
+# produção, defina FRONTEND_ORIGINS no ambiente do Render com o domínio
+# real do frontend (ex: https://pc-hunter.vercel.app) — ver .env.example.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=FRONTEND_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

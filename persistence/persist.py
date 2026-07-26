@@ -1,100 +1,66 @@
 """
-Camada de persistência local (SQLite) do scraper de PCs da OLX.
+Camada de persistência (Postgres/Supabase) do scraper de PCs da OLX.
 
-Tabelas:
+Migrado de SQLite para Postgres (Etapa 1 da migração para nuvem). As
+tabelas em si NÃO são mais criadas por este módulo: rode
+`schema_postgres.sql` uma vez no SQL Editor do Supabase antes de usar.
 
-  OLX_ITENS_RAW
+Tabelas (nomes em minúsculo, convenção do Postgres):
+
+  olx_itens_raw
     id (pk), title, price, link (unique), cpu, ram, ram_tech, gpu, storage,
     storage_type, city, area, details, date_publish,
     latest (1 = versão mais recente do anúncio; 0 = versão antiga arquivada
             quando o mesmo link reaparece com dados diferentes),
     ai_check (0 = specs ainda não passaram pelo pipeline regex/IA; 1 = já passou)
 
-  CPU_SPECS / GPU_SPECS
-    tabelas filhas (fk id_olxTable -> OLX_ITENS_RAW.id) com as specs
+  cpu_specs / gpu_specs
+    tabelas filhas (fk id_olxtable -> olx_itens_raw.id) com as specs
     detalhadas extraídas pelo pipeline híbrido (regex + IA) em specs_AI.py.
 
-NOTA (corrigido): este arquivo tinha o próprio conteúdo colado duas vezes
-(um copy/paste acidental dentro de `persist_specs`), redefinindo todas as
-funções do módulo dentro de um escopo local nunca usado. Esse bloco morto
-foi removido — o comportamento é o mesmo, só sem o lixo de ~180 linhas.
+NOTA IMPORTANTE (bug pré-existente, preservado no port 1:1 desta etapa):
+o link tem constraint UNIQUE. O fluxo de "arquivar versão antiga" faz um
+UPDATE pondo latest=0 na linha existente e tenta inserir uma nova linha
+com o MESMO link — isso viola a UNIQUE e o INSERT é ignorado (igual o
+"INSERT OR IGNORE" fazia no SQLite). Ou seja, hoje um anúncio que reaparece
+com dados diferentes fica com latest=0 e nunca ganha uma linha latest=1
+nova. Não mudei esse comportamento aqui para manter a Etapa 1 focada só
+em troca de banco — mas vale corrigir numa etapa futura (ex: permitir
+múltiplas linhas por link, ou fazer UPSERT de verdade).
 """
-import sqlite3
 import sys
 from pathlib import Path
+from contextlib import contextmanager
+
+import psycopg2
+import psycopg2.extras
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import DB_NAME
+from config import DATABASE_URL
 
 
-# --- CONFIGURAÇÃO E INICIALIZAÇÃO ---
+# --- CONEXÃO ---
+
+def get_connection():
+    """Abre uma conexão nova com o Postgres (Supabase)."""
+    return psycopg2.connect(DATABASE_URL)
+
 
 def persist_init():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-
-    # Tabela Principal
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS OLX_ITENS_RAW (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            price FLOAT,
-            link VARCHAR(2083) NOT NULL UNIQUE,
-            cpu TEXT,
-            ram TEXT,
-            ram_tech TEXT,
-            gpu TEXT,
-            storage TEXT,
-            storage_type TEXT,
-            city TEXT,
-            area TEXT,
-            details TEXT,
-            date_publish DATE,
-            latest INTEGER DEFAULT 1,
-            ai_check INTEGER DEFAULT 0
-        )
-    ''')
-
-    # Criar tabelas de specs aqui para evitar recriar toda vez
-    specs_createTable(conn, cursor)
-
-    conn.commit()
-    return conn
-
-
-def specs_createTable(conn, cursor):
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS CPU_SPECS (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            id_olxTable INTEGER NOT NULL,
-            fabricante TEXT,
-            familia TEXT,
-            modelo  TEXT,
-            geracao TEXT,
-            socket TEXT,
-            spec_extra TEXT 
-        )
-    ''')
-
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS GPU_SPECS (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            id_olxTable INTEGER NOT NULL,
-            fabricante_chip TEXT,
-            montadora TEXT,
-            linha TEXT,
-            modelo TEXT,
-            vram TEXT,
-            extras TEXT
-        )
-    ''')
+    """
+    Mantido por compatibilidade com quem já importava persist_init()
+    esperando uma conexão pronta pra usar. Diferente da versão SQLite,
+    NÃO cria mais as tabelas (isso agora é feito uma vez via
+    schema_postgres.sql) — só abre e devolve a conexão.
+    """
+    return get_connection()
 
 
 # --- FUNÇÕES DE INSERÇÃO RAW (SCRAPING) ---
 
 def persist(title, price, link, specs, local, details):
-    conn = persist_init()
+    conn = get_connection()
     cursor = conn.cursor()
     try:
         persist_item(conn, cursor, title, price, link, specs, local, details)
@@ -115,41 +81,50 @@ def persist_item(conn, cursor, title, price, link, specs, local, details):
 
     try:
         if existence:
-            # Arquiva o anúncio antigo (latest=0) e insere o novo como latest=1
-            cursor.execute("UPDATE OLX_ITENS_RAW SET latest=0 WHERE link=? AND latest=1;", (link,))
+            # Arquiva o anúncio antigo (latest=0). Ver nota no topo do
+            # arquivo sobre a limitação da UNIQUE em link.
+            cursor.execute(
+                "UPDATE olx_itens_raw SET latest=0 WHERE link=%s AND latest=1;",
+                (link,),
+            )
 
-        cursor.execute("""
-            INSERT OR IGNORE INTO OLX_ITENS_RAW 
-            (title, price, link, cpu, ram, gpu, storage, city, area, details, date_publish, latest, ai_check) 
-            VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now', 'localtime'),1,0)
-        """, (title, price, link, cpu, ram, gpu, storage, city, area, description))
+        cursor.execute(
+            """
+            INSERT INTO olx_itens_raw
+            (title, price, link, cpu, ram, gpu, storage, city, area, details, date_publish, latest, ai_check)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, NOW(), 1, 0)
+            ON CONFLICT (link) DO NOTHING
+            """,
+            (title, price, link, cpu, ram, gpu, storage, city, area, description),
+        )
 
         conn.commit()
-    except sqlite3.Error as e:
+    except psycopg2.Error as e:
+        conn.rollback()
         print(f"Erro SQL ao persistir item: {e}")
 
 
 def check_exits(conn, link):
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM OLX_ITENS_RAW WHERE link=?;", (link,))
+    cursor.execute("SELECT id FROM olx_itens_raw WHERE link=%s;", (link,))
     return cursor.fetchall()
 
 
 def search_pending_items():
-    conn = persist_init()  # garante que a tabela existe, mesmo em banco novo
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    # Pega apenas o essencial
-    cursor.execute("SELECT id, title, details FROM OLX_ITENS_RAW WHERE ai_check = 0")
-    rows = cursor.fetchall()
-    conn.close()
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor.execute("SELECT id, title, details FROM olx_itens_raw WHERE ai_check = 0")
+        rows = cursor.fetchall()
+    finally:
+        conn.close()
     return rows
 
 
 def persist_view():
-    conn = persist_init()
+    conn = get_connection()
     try:
-        df = pd.read_sql_query("SELECT * FROM OLX_ITENS_RAW ORDER BY id DESC LIMIT 5", conn)
+        df = pd.read_sql_query("SELECT * FROM olx_itens_raw ORDER BY id DESC LIMIT 5", conn)
         print(df)
     except Exception:
         print("Banco vazio ou erro de leitura.")
@@ -160,15 +135,14 @@ def persist_view():
 # --- FUNÇÕES DE UPDATE DA IA ---
 
 def update_process_ai(item_id, json_str):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_connection()
     cursor = conn.cursor()
 
     try:
         # 1. Salva as specs detalhadas nas tabelas filhas
         persist_specs(item_id, json_str, conn)
 
-        # 2. Prepara os dados resumidos para a tabela principal (OLX_ITENS_RAW)
-        # Converte dicionários em string para não dar erro no SQLite
+        # 2. Prepara os dados resumidos para a tabela principal (olx_itens_raw)
 
         # Tratamento CPU
         cpu_data = json_str.get('cpu')
@@ -178,7 +152,6 @@ def update_process_ai(item_id, json_str):
                 cpu_str = "UNFIT"
             else:
                 parts = [cpu_data.get('fabricante'), cpu_data.get('familia'), cpu_data.get('modelo')]
-                # Filtra Nones e junta com espaço
                 cpu_str = " ".join([str(p) for p in parts if p]).strip()
         elif isinstance(cpu_data, str):
             cpu_str = cpu_data
@@ -192,7 +165,6 @@ def update_process_ai(item_id, json_str):
         elif isinstance(gpu_data, str):
             gpu_str = gpu_data
 
-        # Tratamento RAM/Storage (garante string ou None, nunca dict)
         def safe_str(val):
             if isinstance(val, dict):
                 return str(val)
@@ -205,14 +177,18 @@ def update_process_ai(item_id, json_str):
         storage = safe_str(json_str.get('storage'))
         storage_type = safe_str(json_str.get('storage_type'))
 
-        cursor.execute("""
-            UPDATE OLX_ITENS_RAW 
-            SET cpu = ?, gpu = ?, ram = ?, ram_tech= ?, storage = ?, storage_type=?, ai_check = 1 
-            WHERE id = ?
-        """, (cpu_str, gpu_str, ram, ram_tech, storage, storage_type, item_id))
+        cursor.execute(
+            """
+            UPDATE olx_itens_raw
+            SET cpu = %s, gpu = %s, ram = %s, ram_tech = %s, storage = %s, storage_type = %s, ai_check = 1
+            WHERE id = %s
+            """,
+            (cpu_str, gpu_str, ram, ram_tech, storage, storage_type, item_id),
+        )
 
         conn.commit()
-    except sqlite3.Error as e:
+    except psycopg2.Error as e:
+        conn.rollback()
         print(f"Erro Update AI ID {item_id}: {e}")
     finally:
         conn.close()
@@ -231,11 +207,14 @@ def persist_specs(item_id, json_str, conn):
         c_sock = cpu_data.get('socket')
         c_extra = cpu_data.get('spec_extra')
 
-        cursor.execute('''
-            INSERT OR IGNORE INTO CPU_SPECS 
-            (id_olxTable, fabricante, familia, modelo, geracao, socket, spec_extra) 
-            VALUES (?,?,?,?,?,?,?) 
-        ''', (item_id, c_maker, c_fam, c_model, c_gen, c_sock, c_extra))
+        cursor.execute(
+            """
+            INSERT INTO cpu_specs
+            (id_olxtable, fabricante, familia, modelo, geracao, socket, spec_extra)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (item_id, c_maker, c_fam, c_model, c_gen, c_sock, c_extra),
+        )
 
     # --- Extração GPU ---
     gpu_data = json_str.get('gpu') or {}
@@ -247,8 +226,11 @@ def persist_specs(item_id, json_str, conn):
         g_vram = gpu_data.get('vram')
         g_extras = gpu_data.get('extras')
 
-        cursor.execute('''
-            INSERT OR IGNORE INTO GPU_SPECS
-            (id_olxTable, fabricante_chip, montadora, linha, modelo, vram, extras) 
-            VALUES (?,?,?,?,?,?,?) 
-        ''', (item_id, g_chip, g_maker, g_line, g_model, g_vram, g_extras))
+        cursor.execute(
+            """
+            INSERT INTO gpu_specs
+            (id_olxtable, fabricante_chip, montadora, linha, modelo, vram, extras)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (item_id, g_chip, g_maker, g_line, g_model, g_vram, g_extras),
+        )

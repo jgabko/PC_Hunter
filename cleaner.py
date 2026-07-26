@@ -1,23 +1,23 @@
-import sqlite3
+import psycopg2
 import time
 import random
 from curl_cffi import requests
 from bs4 import BeautifulSoup
-from config import DB_NAME
+from config import DATABASE_URL
 
 
 class Cleaner:
-    def __init__(self, db_name=DB_NAME):
-        self.db_name = db_name
+    def __init__(self, database_url=DATABASE_URL):
+        self.database_url = database_url
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
         }
 
     def get_all_items(self):
         """Pega todos os IDs e Links do banco"""
-        conn = sqlite3.connect(self.db_name)
+        conn = psycopg2.connect(self.database_url)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, link, title FROM OLX_ITENS_RAW")
+        cursor.execute("SELECT id, link, title FROM olx_itens_raw")
         items = cursor.fetchall()
         conn.close()
         return items
@@ -102,20 +102,21 @@ class Cleaner:
 
     def delete_item(self, item_id):
         """Remove o item e suas specs do banco"""
-        conn = sqlite3.connect(self.db_name)
+        conn = psycopg2.connect(self.database_url)
         cursor = conn.cursor()
 
         try:
             # Remove das tabelas filhas primeiro (Specs)
-            cursor.execute("DELETE FROM CPU_SPECS WHERE id_olxTable = ?", (item_id,))
-            cursor.execute("DELETE FROM GPU_SPECS WHERE id_olxTable = ?", (item_id,))
+            cursor.execute("DELETE FROM cpu_specs WHERE id_olxtable = %s", (item_id,))
+            cursor.execute("DELETE FROM gpu_specs WHERE id_olxtable = %s", (item_id,))
 
             # Remove da tabela pai
-            cursor.execute("DELETE FROM OLX_ITENS_RAW WHERE id = ?", (item_id,))
+            cursor.execute("DELETE FROM olx_itens_raw WHERE id = %s", (item_id,))
 
             conn.commit()
             return True
-        except sqlite3.Error as e:
+        except psycopg2.Error as e:
+            conn.rollback()
             print(f"Erro ao deletar ID {item_id}: {e}")
             return False
         finally:
