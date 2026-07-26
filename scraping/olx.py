@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from bs4 import BeautifulSoup
 from curl_cffi import requests
-from curl_cffi.requests.exceptions import RequestException
+from curl_cffi.requests.exceptions import RequestsException
 from pydantic import ValidationError
 
 # Garante que a raiz do projeto esteja no sys.path, para que os imports
@@ -77,7 +77,7 @@ def main():
                 time.sleep(30)
                 continue
             erros_consecutivos = 0
-        except RequestException as e:
+        except RequestsException as e:
             print(f"Erro fatal na conexão: {e}")
             break
 
