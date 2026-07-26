@@ -1,4 +1,7 @@
-const BASE_URL = "http://localhost:8000";
+// Em produção (Vercel), configure VITE_API_URL com a URL da API no Render
+// (ex: https://pc-hunter.onrender.com). Sem essa variável, cai no localhost
+// de dev — é assim que funciona hoje com `npm run dev` + `uvicorn` local.
+const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 async function request(path) {
   const res = await fetch(`${BASE_URL}${path}`);
