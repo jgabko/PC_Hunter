@@ -1,0 +1,43 @@
+name: Scraping agendado (OLX -> Supabase)
+
+on:
+  # Roda sozinho a cada 6h. Cron do GitHub Actions é sempre em UTC;
+  # 0,6,12,18 UTC = 21h, 3h, 9h, 15h no horário de Brasília (UTC-3).
+  schedule:
+    - cron: "0 */6 * * *"
+
+  # Permite disparar manualmente pela aba "Actions" do GitHub, sem
+  # precisar esperar o horário do cron (útil pra testar).
+  workflow_dispatch:
+
+jobs:
+  scraping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45  # trava de segurança: cancela se travar em algo (ex: OLX bloqueando). O primeiro run é mais longo (backfill completo); runs seguintes são incrementais e bem mais rápidos.
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11 (mesma versão usada no Render)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Rodar pipeline completo (scraping + IA + limpeza)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          USE_GROQ: "true"
+          # Limita cada execução a 15 páginas. Enquanto o backfill inicial
+          # não termina, cada run agendado (a cada 6h) avança mais um pedaço
+          # — sem isso, o job estoura o timeout tentando processar milhares
+          # de itens de uma vez só. Depois que o backfill esvaziar (a maioria
+          # das páginas vier só [PULADO]), pode aumentar esse número ou até
+          # remover a variável (0/sem valor = sem limite).
+          MAX_PAGES_PER_RUN: "15"
+        run: python pipeline.py
